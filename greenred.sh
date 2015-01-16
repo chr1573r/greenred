@@ -1,7 +1,7 @@
 #!/bin/bash
 
 function init {
-	APPVERSION="2.0"
+	APPVERSION="2.01"
 
 	# initiate log
 	GRSTATE=init; logger "GREENRED $APPVERSION, HOST: $HOST"
@@ -20,13 +20,15 @@ function init {
 
 	#counters
 	REDC=0
+	REDCC=0
 	TESTC=0
+
 	DOWNC=0
 
 	#how many seconds of downtime before writing downtime stats to log upon re-connecting
 	FUZZYNESS=2
 
-	trap clean_up SIGINT SIGTERM EXIT
+	trap clean_up SIGINT SIGTERM
 	echo >>con.log
 	GRSTATE=init; logger "GREENRED $APPVERSION initialzed. Host $HOST"
 	reset
@@ -80,13 +82,27 @@ function timer {
 			DIFF=$(($timerstop-$timerstart))
 			DIFFSECONDS=$(($DIFF % 60))
 			TIMERSTATS="downtime: $(($DIFF / 60 / 60 ))h $(($DIFF / 60))m $(($DIFF % 60))s"
-			((DOWNC++))
+			DOWNC=$((DOWNC+DIFFSECONDS ))
 			;;
 		sessionstats)
 			DIFF=$(($TERMDATE-$INITDATE))
 			SESSIONLENGTH="$(($DIFF / 60 / 60 ))h $(($DIFF / 60))m $(($DIFF % 60))s"
 			DOWNTIME="$(($DOWNC / 60 / 60 ))h $(($DOWNC / 60))m $(($DOWNC % 60 - 1))s"
 			;;
+		spamstop)
+			CURRENT=$(date +"%s")
+			DIFF=$(($PREVIOUS-$CURRENT))
+			if (( $DIFF < 1 )); then #todo: AND statement instead of nested ifs
+				if (( $REDCC > 5)); then
+					#logger "More than 5 ping fails per second, spamstop on"
+					sleep 0.6
+				#else
+					#logger "Less than 5 ping fails per second, spamstop off"
+				fi
+			fi
+
+			PREVIOUS=$CURRENT
+			
 	esac
 	
 }
@@ -101,9 +117,12 @@ function main {
 			NEWSTATE="GREEN"
 			echo -ne ""$LIGHTGREEN""\#""
 			sleep 0.4
+			
 		else
 			NEWSTATE="RED"
 			echo -ne ""$LIGHTRED""\#""
+			((REDCC++))
+			timer spamstop
 		fi
 
 		if [ "$NEWSTATE" != "$OLDSTATE" ]; then
@@ -115,12 +134,15 @@ function main {
 				else
 					logger "Connection re-established"
 				fi
+				REDCC=0
+				STARTMSG=false
 			fi
 			if [ "$NEWSTATE" == "RED" ]; then ((REDC++)); timer start; logger "Connection lost"; fi
 			
 		fi
 		OLDSTATE=$NEWSTATE
 		((TESTC++))
+
 	done
 }
 
