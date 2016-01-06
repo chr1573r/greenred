@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# bugs: after terminal reset, a full display does not insert required scrolling newlines.
+#       add mechanism for adding newlines according to y
+
 function init {
 	APPVERSION="2.01"
 
@@ -13,10 +16,19 @@ function init {
 	DEF="\x1b[0m"
 	LIGHTGREEN="\x1b[32;01m"
 	LIGHTRED="\x1b[31;01m"
+	LIGHTCYAN="\x1b[36;01m"
 
 	#initial states
 	OLDSTATE="pending"
 	NEWSTATE="pending"
+	X=$(tput cols)
+	Y=$(tput lines)
+	((Y--))
+	((Y--))
+	POSX=0
+	POSY=0
+
+	declare grarray
 
 	#counters
 	REDC=0
@@ -28,16 +40,19 @@ function init {
 	#how many seconds of downtime before writing downtime stats to log upon re-connecting
 	FUZZYNESS=2
 
-	trap clean_up SIGINT SIGTERM
+	trap clean_up SIGINT SIGTERM EXIT
 	echo >>con.log
 	GRSTATE=init; logger "GREENRED $APPVERSION initialzed. Host $HOST"
 	reset
+	tput civis
 	timer start
 	GRSTATE=main
 
 }
 
 function clean_up {
+	GRSTATE=exit
+	logger "Exit requested"
 	TERMDATE=$(date +"%s")
 	timer sessionstats
 	reset
@@ -52,10 +67,49 @@ function clean_up {
 	logger
 	logger "Estimated total downtime: $DOWNTIME"
 	logger "#######################################"
+	grlogwrite
 	GRSTATE=stop; logger "GREENRED $APPVERSION terminated"
 	echo
 	echo -e "GREENRED $APPVERSION terminated at $(date)"
 	exit
+}
+
+termreset()
+{
+		clear
+		echo Terminal size changed, resetting...
+		X=$(tput cols)
+		Y=$(tput lines)
+		((Y--))
+		((Y--))
+		POSX=$(( grecontentsize % X ))
+		POSY=$(( grecontentsize / X ))
+		reset
+		grload
+}
+
+function grsave {
+	grarraysize=${#grarray[*]}
+	grarray[$((grarraysize+1))]="$1"
+}
+
+function gresave {
+	grearraysize=${#grearray[*]}
+	grearray[$((grearraysize+1))]="$1"
+	grecontent="${grearray[*]}"
+ 	grecontentsize=$(( ${#grecontent} - ${#grearray[@]} + 1 ))
+
+}
+
+function grload {
+	for saved in "${grarray[@]:0}"; do echo -ne "$saved"; done
+}
+
+function grlogwrite {
+	echo "BEGIN PATTERN LOG" >> con.log
+	grload >> con.log
+	echo -e "$DEF" >> con.log
+	echo "END PATTERN LOG" >> con.log
 }
 
 function logger {
@@ -113,15 +167,18 @@ function main {
 	do
 		ping -c 1 -W 500 $HOST &> /dev/null
 
-		if [ "$?" == "0" ]; then
+		if [ "$?" -eq "0" ]; then
 			NEWSTATE="GREEN"
-			echo -ne ""$LIGHTGREEN""\#""
-			sleep 0.4
+			echo -ne ""$LIGHTGREEN"#"$DEF""
+			grsave "$LIGHTGREEN#"
+			eventstdin
 			
 		else
 			NEWSTATE="RED"
-			echo -ne ""$LIGHTRED""\#""
+			echo -ne ""$LIGHTRED"#"$DEF""
+			grsave "$LIGHTRED#"
 			((REDCC++))
+			eventstdin
 			timer spamstop
 		fi
 
@@ -141,9 +198,60 @@ function main {
 			
 		fi
 		OLDSTATE=$NEWSTATE
+		
 		((TESTC++))
+		((POSX++))
+
+		CURRENTX=$(tput cols)
+		CURRENTY=$(tput lines)
+		((CURRENTY--))
+		((CURRENTY--))
+		[[ "$X" != "$CURRENTX" ]] && termreset
+		[[ "$Y" != "$CURRENTY" ]] && termreset
+
+		if [[ "$POSX" -ge "$X" ]]; then
+			POSX=0
+			((POSY++))
+			[[ "$POSY" -ge "$Y" ]] && tput cup $POSY $POSX && tput el && echo && echo && ((POSY--))
+			tput cup $POSY $POSX
+		fi
+		gresave "#"
+
 
 	done
+}
+function promptmove {
+	tput cup $(( $(tput lines) - 2 )) 0
+}
+function prompt {
+	promptmove
+	echo -ne "> $@"
+}
+
+function eventstdin {
+tput sc
+unset EVENT
+unset STDIN
+tput cnorm
+promptmove
+read -t 1 -n 1 -p "> Press any key for event or exit" STDIN
+		if [ $? == 0 ]; then
+			GRSTATE=evnt
+			promptmove
+			tput el
+			read -p "Event (write e to exit):" EVENT
+			[[ "$EVENT" == "e" ]] && exit
+			logger "New event: '$EVENT'"
+			EVENTL=${#EVENT}
+			promptmove
+			tput el
+			GRSTATE=main
+		fi
+		promptmove
+		#echo -n XY: $X x $Y    XYPOS: $POSX, $POSY    ; sleep 1
+tput civis
+tput rc
+[[ ! -z "$EVENT" ]] && echo -en "$LIGHTCYAN$EVENT$DEF" && grsave "$LIGHTCYAN$EVENT" && gresave "$EVENT" && POSX=$((POSX+EVENTL))
 }
 
 if [ -z "$1" ]; then echo Please use syntax ./greenred \<HOST to ping\>; exit; else HOST=$1; fi
