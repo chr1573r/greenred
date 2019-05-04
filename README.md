@@ -1,14 +1,18 @@
 # greenred
 
+
 greenred is a shellscript used to monitor a network connection through ping.
 
-Unreliable wi-fi connections on public transportation was the inspiration for greenred.
+![Demo](https://chr1573r.github.io/repo-assets/greenred/greenred.png)
 
+Unreliable wi-fi connections on public transportation was the inspiration for greenred.
 
 
 It prints a green "#" when a ping is successful, a red "#" if it fails.
 
 This makes it easy to monitor network reliabilty on-the-fly and reveal disconnect patterns.
+
+You can also at any time add an in-line comment inbetween the dashes
 
 ### Syntax
 ```sh
